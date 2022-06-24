@@ -14,7 +14,7 @@ setwd("100_english_novels")
 ```
 
 
-In the preprocessing step, the package `stylo` will be used: it allows for loading the text files, tokenization, computing word frequencies, and preparing a document-term matrix. The package `tm` can be used instead but the code needs to be adjsted accordignly.
+In the preprocessing step, the package `stylo` will be used: it allows for loading the text files, tokenization, computing word frequencies, and preparing a document-term matrix. The package `tm` can be used instead but the code needs to be adjusted accordingly.
 
 For inferring the word vectors, the package `text2vec` will be used.
 
@@ -37,7 +37,7 @@ word_frequencies_orig = make.table.of.frequencies(corpus = texts, features = fre
 ```
 
 
-Word vectors should follow now. [The code will be updated sooner, nonetheless the final result can be retrieved from the same GitHub repository containing 100 English novels:]
+Word vectors should follow now. [The code will be updated sooner, nonetheless the final result can be retrieved from the same GitHub repository containing 100 English novels (link posted above):]
 
 
 ``` R
@@ -48,9 +48,9 @@ load("100_english_novels/word_embedding_models/100_English_novels_GloVe_100_dime
 
 
 
-## Computing word similarites
+## Computing word similarities
 
-For each word, provide its semantic background, i.e. _n_ most similar words:
+For each word, provide its semantic background, i.e. _n_ most similar words. This steps needs to be done once, for a given language. As with contemporary language models, the following matrix can be reused in many applications. Here, for the sake of the experiment, the whole range of >35,000 neighboring words has been computed, whereas in actual applications – as the current study clearly suggests – suffice it to have a background of 100 adjacent words. Here's the code for the whole stuff:
 
 
 ``` R
@@ -69,27 +69,36 @@ for(word in vocabulary) {
     similar_words = names(sort(cos_sim[,1], decreasing = TRUE)[1:neighborship_size])
     word_similarities_ALL = rbind(word_similarities_ALL, similar_words)
 }
+
 rownames(word_similarities_ALL) = vocabulary
-class(word_similarities_ALL) = "stylo.data"
+
+# since the procedure puts the reference word as the most similar
+# to itself, let's get rid of the first column
+word_similarities_ALL = word_similarities_ALL[,-c(1)]
 #
+#class(word_similarities_ALL) = "stylo.data"
 #save(word_similarities_ALL, file = "ranked_word_similarities.RData")
 ```
 
 
-Please keep in mind that the procedure is rather costly. Conveniently, the results of the above function can be loaded the current GitHub repository, namely from the following file:
+Please keep in mind that the procedure is rather costly. Conveniently, the results of the above function can be loaded from the current GitHub repository, namely from the following file:
 
 ``` R
 load("ranked_word_similarities.RData")
 ```
 
-It's a rather large file (>185Mb) and it will never be used in its entirety outside the current experiment. In real-life applications, a ranked list of 35,000 neighborihg words could safely be trimmed to 100 or so neighbors. 
+It's a rather large file (>185Mb) and it will never be used in its entirety outside the current experiment. In real-life applications, a ranked list of 35,000 neighboring words could safely be trimmed to 100 or so neighbors. With this in mind a radically smaller file has been put into the repository; take this one for your actual stylometric computations:
 
-
+``` R
+load("ranked_word_similarities_100.RData")
+```
 
 
 ## Core procedure: getting the improved frequencies
 
 The function to compute relative word frequencies using a subset of reference words. Rather than dividing a given word's occurrences by the total number of words, it takes as a denominator the sum of the occurrences of _n_ relevant words. The relevant words need to be identified beforehand, e.g. using a word vector model.
+
+In short, this is the core function of the whole procedure, and the only one that should be used routinely outside this experiment. So far, it's a prototype rather than an optimized fully-fledged function, yet even now it does the trick:
 
 
 ``` R
@@ -101,18 +110,28 @@ compute_subset_frequencies = function(dtm_matrix,
 	                                  word_vector_similarities, 
 	                                  no_of_similar_words) {
 
-	semantic_space = word_vector_similarities[,1:(no_of_similar_words+1)]
+	semantic_space = word_vector_similarities[ , 1:no_of_similar_words, drop = FALSE]
 	no_of_words = dim(semantic_space)[1]
 	final_frequency_matrix = matrix(nrow = dim(dtm_matrix)[1], ncol = no_of_words)
 
 	for(i in 1:no_of_words) {
 
+		# check if the required word(s) appears in the corpus
 	    words_sanitize = semantic_space[i,] %in% colnames(dtm_matrix)
 	    words_to_compute = semantic_space[i, words_sanitize]
-	    if(length(words_to_compute) == 1) {
-	    	words_to_compute = c(words_to_compute, colnames(dtm_matrix)[1])
+	    # if the corpus doesn't contain any of the words required 
+	    # by the model, then grab the the most frequent word
+	    # for reference (it should not happen often, though)
+	    if(length(words_to_compute) == 0) {
+	    	words_to_compute = colnames(dtm_matrix)[1]
 	    }
+	    # add the occurences of the current word being computed;
+	    # e.g. for the word "of", add "of" to the equation
+	    words_to_compute = c(colnames(dtm_matrix)[i], words_to_compute)
+	    # getting the occurrences of the relevant words from
+	    # the input matrix of word occurrences:
 		f = dtm_matrix[, words_to_compute]
+		# finally, computing new relative frequencies
 		final_frequency_matrix[,i] = f[,1] / rowSums(f)
 
 	}
@@ -123,14 +142,16 @@ compute_subset_frequencies = function(dtm_matrix,
 	rownames(final_frequency_matrix) = rownames(dtm_matrix)
 	colnames(final_frequency_matrix) = rownames(semantic_space)
 
+	class(final_frequency_matrix) = "stylo.data"
+
 return(final_frequency_matrix)
 }
 ```
 
 
 
-
-An auxiliary function to randomly pick training set texts in a stratified cross-validation scenario:
+For the sake of the experiment, we'll also need a function to select training and test samples from the corpus. Here goes 
+an auxiliary function to randomly pick training set texts in a stratified cross-validation scenario:
 
 ``` R
 pick_training_texts = function(available_texts) {
@@ -168,7 +189,7 @@ pick_training_texts = function(available_texts) {
 The main classification procedure follows. It iterates over the increasing number of nearest neighbors for each analyzed word. Specifically, for each of the MFWs, it fist looks for its 1 nearest neighbor, then 2 nearest neighbors, all the way to 10,000. For each iteration, a supervised text classification takes place.
 
 The function requires:
-* `word_frequencies` -- a document-term matrix with raw frequencies (occurrencies) of words across a given corpus. Such a matrix can be procuded either by the package `stylo` (as above), or by the package `tm` (not covered here).
+* `word_frequencies` -- a document-term matrix with raw frequencies (occurrences) of words across a given corpus. Such a matrix can be produced either by the package `stylo` (as above), or by the package `tm` (not covered here).
 * `word_similarities_ALL` -- a table with nearest neighbors, e.g. the row for the word _the_ contains: "the", "of", "this", "in", "there", "on", ...
 * the function `compute_subset_frequencies` as defined above, to perform relative frequency calculations on a subset of reference words
 * the function `pick_training_texts` as defined above, to randomly select training set members in a stratified cross-validation scenario.
@@ -179,9 +200,8 @@ The function requires:
 ``` R
 mfw_coverage = seq(100, 1000, 50)
 method = "delta"
-distance = "eder"
+distance = "wurzburg"
 
-semantic_area_to_cover = seq(20, 300, 20)
 semantic_area_to_cover = c(1:9, seq(10, 90, 10), seq(100, 900, 100), seq(1000, 10000, 1000))
 collect_results_all_similarity_areas = c()
 
@@ -218,14 +238,14 @@ colnames(collect_results_all_similarity_areas) = semantic_area_to_cover
 ## Baseline
 
 
-Additionally, it makes a lot of sense to compute a baseline, i.e. a series of tests based on standard relative frequencies. For the sake of simplicity, one round of tests for 100, 200, ..., 1000 MFWs should be sufficient, but it will be more reliable if the baseline computation is repeated independently _n_ times (here, 37 times, in orded to match the size of the above `semantic_area_to_cover` vector). Please keep in mind that all the parameters are inherited from the above setup, in order to match the baseline with the actual results.
+Additionally, it makes a lot of sense to compute a baseline, i.e. a series of tests based on standard relative frequencies. On theoretical grounds, one round of tests for 100, 200, ..., 1000 MFWs should be sufficient, but it will be more reliable if the baseline computation is repeated independently _n_ times (here, 37 times, in order to match the size of the above `semantic_area_to_cover` vector). Please keep in mind that all the parameters are inherited from the above setup, in order to match the baseline with the actual results.
 
 
 
 ``` R
 mfw_coverage = seq(100, 1000, 50)
 method = "delta"
-distance = "eder"
+distance = "wurzburg"
 
 collect_baseline_results = c()
 
@@ -369,7 +389,7 @@ rownames(similarity_neighborhood_ALL) = round(similarity_thresholds_to_assess, 2
 ```
 
 
-Given the information of how many neighboring words should be taken into account (e.g. the word "the" has 38 neighbors within the distance of 0.6), and given the previously computed information of the order of neighbors for each seed word (e.g. for the word "the" these are: "of", "this", "in", "there", ...), we can get the _n_ neighbors for a given distance. The following funcion is responsible for it:
+Given the information of how many neighboring words should be taken into account (e.g. the word "the" has 38 neighbors within the distance of 0.6), and given the previously computed information of the order of neighbors for each seed word (e.g. for the word "the" these are: "of", "this", "in", "there", ...), we can get the _n_ neighbors for a given distance. The following function is responsible for it:
 
 
 ``` R
