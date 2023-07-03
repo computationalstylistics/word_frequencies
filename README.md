@@ -1,5 +1,9 @@
 # Boosting word frequencies
 
+[![paper](https://img.shields.io/badge/arXiv-2211.01289-green)](https://arxiv.org/abs/2211.01289)
+[![paper](https://img.shields.io/badge/CEUR--WS-3290-blue)](https://ceur-ws.org/Vol-3290/long_paper5362.pdf)
+
+
 Data and code needed to replicate the study on improving the performance of word frequencies:
 
 > **Eder, M.** (2022). Boosting word frequencies in authorship attribution. _CHR 2022 Computational Humanities Research_. Antwerp, pp. 387–97, [https://ceur-ws.org/Vol-3290/long_paper5362.pdf](https://ceur-ws.org/Vol-3290/long_paper5362.pdf).
